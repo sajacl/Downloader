@@ -8,7 +8,8 @@ let package = Package(
     products: [
         .library(
             name: "Downloader",
-            targets: ["Downloader"]),
+            targets: ["Downloader"]
+        ),
     ],
     targets: [
         .target(
