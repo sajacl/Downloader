@@ -1,0 +1,3 @@
+extension Downloader {
+    struct Request {}
+}
