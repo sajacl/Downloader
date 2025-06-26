@@ -1,3 +1,3 @@
 import Foundation
 
-enum Downloader {}
+public enum Downloader {}
