@@ -3,7 +3,7 @@ import Foundation
 extension Downloader {
     /// Object that describes a request for download a resource.
     public struct Request {
-        /// URL of the resource.
+        /// Resource's url.
         public let source: URL
 
         /// Optional destination for the resource.
