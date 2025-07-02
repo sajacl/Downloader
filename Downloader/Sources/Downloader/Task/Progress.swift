@@ -1,35 +1,55 @@
 import Foundation
 
+extension Downloader {
+    public typealias TaskProgress = Task.Progress
+}
+
 extension Downloader.Task {
     /// Object that represents progress of a task.
-    public struct Progress: Equatable, Comparable {
-        /// Process of the task that can be started from 0, or being resumed from a progress.
-        public var partialProgress: Float
-
+    public struct Progress: Equatable, Comparable,
+                            Sendable,
+                            CustomStringConvertible, CustomDebugStringConvertible {
         /// Number of bytes that has been written for the given task.
-        public var totalBytesWritten: UInt64?
+        public var totalBytesWritten: UInt64
 
-        init(_ progress: Float, totalBytesWritten: UInt64? = nil) {
-            self.partialProgress = progress
+        /// Number of bytes that is expected to be written for a given task.
+        public var totalBytesExpectedToWrite: UInt64
+
+        init(totalBytesWritten: UInt64, totalBytesExpectedToWrite: UInt64) {
             self.totalBytesWritten = totalBytesWritten
+            self.totalBytesExpectedToWrite = totalBytesExpectedToWrite
         }
-        
-        /// Zero progress, indicating the task has not been started.
-        @MainActor static let zero: Progress = Progress(0)
 
         public static func < (lhs: Progress, rhs: Progress) -> Bool {
-            let progressComparison = lhs.partialProgress < rhs.partialProgress
+            lhs.totalBytesWritten < rhs.totalBytesWritten
+        }
 
-            lazy var bytesWrittenComparison: Bool = {
-                guard let lhsTotalBytesWritten = lhs.totalBytesWritten,
-                      let rhsTotalBytesWritten = rhs.totalBytesWritten else {
-                    return true
-                }
-                
-                return lhsTotalBytesWritten < rhsTotalBytesWritten
-            }()
+        /// Zero progress, indicating the task has not been started.
+        public static let zero: Progress = Progress(
+            totalBytesWritten: 0,
+            totalBytesExpectedToWrite: 0
+        )
 
-            return progressComparison && bytesWrittenComparison
+        /// Percentage of completion as a value between 0 and 1 (e.g., 0.75 = 75%)
+        public var fractionCompleted: Double {
+            guard totalBytesExpectedToWrite > 0 else {
+                return 0
+            }
+
+            return Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+        }
+
+        /// Percentage of completion as an integer from 0 to 100
+        public var percentageCompleted: UInt {
+            UInt((fractionCompleted * 100))
+        }
+
+        public var description: String {
+            "\(percentageCompleted)/100"
+        }
+
+        public var debugDescription: String {
+            "\(totalBytesWritten)/\(totalBytesExpectedToWrite)"
         }
     }
 }
