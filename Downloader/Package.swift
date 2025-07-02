@@ -5,6 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "Downloader",
+    platforms: [.iOS(.v14), .macOS(.v11)],
     products: [
         .library(
             name: "Downloader",
