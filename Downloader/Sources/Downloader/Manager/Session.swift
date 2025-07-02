@@ -2,7 +2,7 @@ import Foundation
 import OSLog
 
 extension Downloader {
-    public final class Session: Equatable,
+    final class Session: Equatable,
                                 @unchecked Sendable,
                                 CustomStringConvertible, CustomDebugStringConvertible {
         /// System's session.
@@ -13,7 +13,7 @@ extension Downloader {
         let kind: Kind
 
         private let taskListLock = NSLock()
-        // queue + task lookup?
+
         /// Task list, used for caching based on the requests.
         private(set) var tasks: [Request: Downloader.Task]
 
@@ -30,14 +30,14 @@ extension Downloader {
             logger = Logger(subsystem: "Downloader.Session", category: "\(kind)")
         }
 
-        public static func == (lhs: Downloader.Session, rhs: Downloader.Session) -> Bool {
+        static func == (lhs: Downloader.Session, rhs: Downloader.Session) -> Bool {
             let sessionComparison = lhs.underlyingSession == rhs.underlyingSession
             lazy var kindComparison = lhs.kind == rhs.kind
 
             return sessionComparison && kindComparison
         }
 
-        public static func == (lhs: Downloader.Session, rhs: URLSession) -> Bool {
+        static func == (lhs: Downloader.Session, rhs: URLSession) -> Bool {
             lhs.underlyingSession == rhs
         }
 
@@ -47,7 +47,7 @@ extension Downloader {
             intercepting completionHandler: (
                 @Sendable (URL?, Result<URLResponse, Error>?) -> Void
             )? = nil
-        ) {
+        ) -> Downloader.Task {
             let task: Downloader.Task
 
             if let cached = tasks[request] {
@@ -61,6 +61,8 @@ extension Downloader {
             }
 
             task.resume(intercepting: completionHandler)
+
+            return task
         }
 
         /// Cancels all the active tasks.
@@ -173,16 +175,20 @@ extension Downloader {
         }
 
         func sessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+            taskListLock.withLock {
+                tasks = [:]
+            }
 
+            logger.trace("[\(self.kind)] Finished events.")
         }
 
         // Descriptors
 
-        public var description: String {
+        var description: String {
             "Session of \(kind) kind"
         }
 
-        public var debugDescription: String {
+        var debugDescription: String {
             "Session of \(kind) kind holding reference to underlying session: \(underlyingSession)"
         }
     }
