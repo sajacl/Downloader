@@ -2,20 +2,12 @@ import Foundation
 import OSLog
 
 extension Downloader {
-    // CachedSession?
-    // DownloadSession?!
-    final class Session: Equatable,
-                         @unchecked Sendable,
-                         CustomStringConvertible, CustomDebugStringConvertible {
+    public final class Session: Equatable,
+                                @unchecked Sendable,
+                                CustomStringConvertible, CustomDebugStringConvertible {
         /// System's session.
         private let underlyingSession: URLSession
 
-//        private let delegate: (any URLSessionDownloadDelegate)?
-
-//        private let internalQueue = DispatchQueue(label: "Downloader.InternalQueue")
-
-//        private let queue: OperationQueue?
-        
         /// Kind/Purpose of the session.
         /// This property will be consumed to categorise the sessions.
         let kind: Kind
@@ -35,127 +27,67 @@ extension Downloader {
             self.kind = kind
             tasks = [:]
 
-            logger = Logger(subsystem: "\(kind)", category: "Downloader.Session")
+            logger = Logger(subsystem: "Downloader.Session", category: "\(kind)")
         }
 
-        static func == (lhs: Downloader.Session, rhs: Downloader.Session) -> Bool {
+        public static func == (lhs: Downloader.Session, rhs: Downloader.Session) -> Bool {
             let sessionComparison = lhs.underlyingSession == rhs.underlyingSession
             lazy var kindComparison = lhs.kind == rhs.kind
 
             return sessionComparison && kindComparison
         }
 
-        static func == (lhs: Downloader.Session, rhs: URLSession) -> Bool {
+        public static func == (lhs: Downloader.Session, rhs: URLSession) -> Bool {
             lhs.underlyingSession == rhs
         }
-        
+
         /// Enqueues a request to fetch an arbitrary resource.
         func enqueue(
             request: Request,
-            intercepting completionHandler: ((URL?, URLResponse?, (any Error)?) -> Void)?
+            intercepting completionHandler: (
+                @Sendable (URL?, Result<URLResponse, Error>?) -> Void
+            )? = nil
         ) {
             if let cached = tasks[request] {
-                continueOrRetryExistingTask(cached, with: request, intercepting: completionHandler)
+                cached.resume(intercepting: completionHandler)
             } else {
-                generateAndStoreNewTask(for: request, intercepting: completionHandler)
+                let task = Downloader.Task(session: underlyingSession, request: request)
+
+                taskListLock.withLock {
+                    tasks[request] = task
+                }
+
+                task.resume(intercepting: completionHandler)
             }
         }
 
-        private func continueOrRetryExistingTask(
-            _ task: Downloader.Task,
-            with request: Request,
-            intercepting completionHandler: ((URL?, URLResponse?, (any Error)?) -> Void)?
-        ) {
-            switch task.state {
-                case .queued(_):
-                    return
-
-                case let .suspended(resumableData):
-                    if let completionHandler {
-                        let newTask = underlyingSession.downloadTask(
-                            withResumeData: resumableData,
-                            completionHandler: completionHandler
-                        )
-
-                        precondition(!(task == newTask))
-
-                        newTask.resume()
-                    } else {
-                        let newTask = underlyingSession.downloadTask(
-                            withResumeData: resumableData
-                        )
-
-                        precondition(!(task == newTask))
-
-                        newTask.resume()
-                    }
-
-                case .downloading(_):
-                    return
-
-                case .completed(_):
-                    return
-
-                case .canceled:
-                    return
-
-                case .failed(_):
-                    // retry
-                    // if request.waitsForConnectivity
-                    // generateAndStoreNewTask(for: request, intercepting: completionHandler)
-                    return
-            }
-        }
-
-        private func generateAndStoreNewTask(
-            for request: Request,
-            intercepting completionHandler: ((URL?, URLResponse?, (any Error)?) -> Void)?
-        ) {
-            let dataTask: URLSessionDownloadTask
-
-            if let completionHandler {
-                dataTask = underlyingSession.downloadTask(
-                    with: request.makeURLRequest(),
-                    completionHandler: completionHandler
-                )
-            } else {
-                dataTask = underlyingSession.downloadTask(with: request.makeURLRequest())
-            }
-
-            let task = Downloader.Task(dataTask, request: request)
-
-            taskListLock.withLock {
-                tasks[request] = task
-            }
-
-            task.resume()
-        }
-        
         /// Cancels all the active tasks.
         func cancelAll() {
+            logger.trace("[\(self.kind)] Trying to cancel tasks.")
+
             let _tasks = taskListLock.withLock { tasks }
 
             _tasks.values.forEach { $0.cancel() }
         }
-        
+
         /// Pauses all the active tasks.
-        func pauseAll(persistState: Bool) {
+        func pauseAll() {
+            logger.trace("[\(self.kind)] Trying to pause tasks.")
+
             let _tasks = taskListLock.withLock { tasks }
 
-            _tasks.values.forEach { task in
-                task.pause()
-            }
+            _tasks.values.forEach { $0.pause() }
         }
-        
+
         /// Resumes the paused tasks.
         func resumeAll() {
+            logger.trace("[\(self.kind)] Trying to resume tasks.")
+
             let _tasks = taskListLock.withLock { tasks }
 
-            _tasks.values.forEach { task in
-                task.resume()
-            }
+            _tasks.values.forEach { $0.resume() }
         }
-        
+
         // Task
 
         func taskUpdated(_ task: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
@@ -239,17 +171,17 @@ extension Downloader {
         }
 
         func sessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-            
+
         }
 
         // Descriptors
 
-        var description: String {
-            "Session"
+        public var description: String {
+            "Session of \(kind) kind"
         }
 
-        var debugDescription: String {
-            "Session"
+        public var debugDescription: String {
+            "Session of \(kind) kind holding reference to underlying session: \(underlyingSession)"
         }
     }
 }
