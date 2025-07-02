@@ -9,9 +9,9 @@ extension Downloader {
         public let path: URL
 
         /// Name of the resource + extension.
-        public let fileName: String?
+        public let fileName: String
 
-        public init(path: URL, fileName: String?) {
+        public init(path: URL, fileName: String) {
             self.path = path
             self.fileName = fileName
         }
@@ -27,19 +27,17 @@ extension Downloader {
         var fullPath: URL {
             var url = path
 
-            if let fileName = fileName {
-                url.appendPathComponent(fileName)
-            }
+            url.appendPathComponent(fileName)
 
             return url
         }
 
         public var description: String {
-            path.absoluteString + (fileName ?? "")
+            path.absoluteString + fileName
         }
 
         public var debugDescription: String {
-            path.absoluteString + (fileName ?? "")
+            path.absoluteString + fileName
         }
     }
 }
