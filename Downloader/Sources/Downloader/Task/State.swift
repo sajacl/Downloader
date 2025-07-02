@@ -16,7 +16,9 @@ extension Downloader.Task {
         case downloading(Progress)
 
         /// Task is completed and resource has been written to the given url.
-        case completed(URL)
+        case completed(tempPath: URL)
+
+        case finished(finalPath: URL)
 
         /// Task has been canceled.
         case canceled
@@ -61,6 +63,9 @@ extension Downloader.Task {
                 case .completed:
                     return "Completed"
 
+                case .finished:
+                    return "Finished"
+
                 case .canceled:
                     return "Canceled"
 
@@ -88,8 +93,11 @@ extension Downloader.Task {
                 case let .downloading(progress):
                     return "Downloading with progress \(progress)"
 
-                case let .completed(location):
-                    return "Completed at \(location)"
+                case let .completed(tempLocation):
+                    return "Download completed with temporary path: \(tempLocation.absoluteString)"
+
+                case let .finished(location):
+                    return "Finished task with resource path: \(location.absoluteString)"
 
                 case .canceled:
                     return "Canceled"
