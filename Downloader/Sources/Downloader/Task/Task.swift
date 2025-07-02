@@ -2,6 +2,8 @@ import Foundation
 import OSLog
 
 extension Downloader {
+    // Request -> Queue -> UninitializedTask -> Manager -> InProgressTask
+
     /// Object that describes a download task.
     public final class Task: Equatable,
                              @unchecked Sendable,
@@ -92,7 +94,7 @@ extension Downloader {
                 case let .suspended(resumableData):
                     tryResumeTask(from: resumableData, intercepting: completionHandler)
 
-                case .downloading, .completed:
+                case .downloading, .completed, .finished:
                     // no-op
                     return
 
@@ -222,18 +224,66 @@ extension Downloader {
         func taskUpdated(didFinishDownloadingTo location: URL) {
             logger.trace("[identifier: '\(self.identifier)'] Task finished downloading.")
 
-            state = .completed(location)
+            state = .completed(tempPath: location)
 
-            let location = request.destination?.fullPath ?? location
+            let fileManager = FileManager.default
 
-//            let tmpPath = location.path
-//            let stableURL = FileManager.default.temporaryDirectory.appendingPathComponent("copiedDownload.dat")
-//
-//            try? FileManager.default.copyItem(atPath: tmpPath, toPath: stableURL.path)
+            // Determine the base file name (fallback to source filename)
+            let fileName = request.destination?.fileName ?? request.source.lastPathComponent
 
-            logger.debug(
-                "[identifier: '\(self.identifier)'] Task finished writing to location '\(location)'."
-            )
+            // Start with the temporary directory
+            var persistencePath = fileManager.temporaryDirectory
+
+            if let destinationDirectory = request.destination?.path {
+                let customDirectory = persistencePath.appending(path: destinationDirectory.absoluteString)
+
+                // Ensure the directory exists, or try to create it
+                var isDirectory: ObjCBool = false
+                let fileExists = fileManager.fileExists(
+                    atPath: customDirectory.path,
+                    isDirectory: &isDirectory
+                )
+
+                if !fileExists {
+                    do {
+                        try fileManager.createDirectory(
+                            at: customDirectory,
+                            withIntermediateDirectories: true
+                        )
+
+                        persistencePath = customDirectory
+                    } catch {
+                        // Fallback to temp directory if creation fails
+                    }
+
+                } else if isDirectory.boolValue {
+                    persistencePath = customDirectory
+                }
+            }
+
+            // Append the filename
+            persistencePath = persistencePath.appendingPathComponent(fileName)
+
+            do {
+                // If a file already exists, remove it to avoid a crash
+                if fileManager.fileExists(atPath: persistencePath.path) {
+                    try fileManager.removeItem(at: persistencePath)
+                }
+
+                try fileManager.moveItem(at: location, to: persistencePath)
+
+                logger.debug(
+                    "[identifier: '\(self.identifier)'] Resource successfully moved file to '\(persistencePath.path)'."
+                )
+
+                state = .finished(finalPath: location)
+            } catch {
+                logger.error(
+                    "[identifier: '\(self.identifier)'] Failed to move downloaded file: \(error.localizedDescription)"
+                )
+
+                state = .failed(error)
+            }
         }
 
         func taskUpdated(
@@ -292,8 +342,6 @@ extension Downloader {
         }
     }
 }
-
- // Request -> Queue -> UninitializedTask -> Manager -> InProgressTask
 
 extension Downloader.Task {
     private static let nslock = NSLock()
