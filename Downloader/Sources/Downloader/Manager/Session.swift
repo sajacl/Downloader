@@ -48,17 +48,19 @@ extension Downloader {
                 @Sendable (URL?, Result<URLResponse, Error>?) -> Void
             )? = nil
         ) {
+            let task: Downloader.Task
+
             if let cached = tasks[request] {
-                cached.resume(intercepting: completionHandler)
+                task = cached
             } else {
-                let task = Downloader.Task(session: underlyingSession, request: request)
+                task = Downloader.Task(session: underlyingSession, request: request)
 
                 taskListLock.withLock {
                     tasks[request] = task
                 }
-
-                task.resume(intercepting: completionHandler)
             }
+
+            task.resume(intercepting: completionHandler)
         }
 
         /// Cancels all the active tasks.
