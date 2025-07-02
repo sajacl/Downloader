@@ -20,12 +20,14 @@ extension Downloader {
         public init(name: String) {
             self.name = name
 
-            logger = Logger(subsystem: name, category: "Downloader.Manager")
+            logger = Logger(subsystem: "Downloader.Manager", category: name)
         }
 
         public func register(
             _ request: Request,
-            intercepting completionHandler: ((URL?, URLResponse?, (any Error)?) -> Void)? = nil
+            intercepting completionHandler: (
+                @Sendable (URL?, Result<URLResponse, Error>?) -> Void
+            )? = nil
         ) {
             logger.trace("[\(self.name)] Registering request \(request) for download.")
 
@@ -116,26 +118,28 @@ extension Downloader {
         }
 
         public func cancelAll() {
+            logger.trace("[\(self.name)] Trying to cancel downloads.")
+
             let _sessions = sessionsLock.withLock { sessions }
 
             _sessions.values.forEach { session in
                 session.cancelAll()
             }
-
-            logger.trace("[\(self.name)] Canceled downloads.")
         }
 
         public func pauseAll() {
+            logger.trace("[\(self.name)] Trying to pause downloads.")
+
             let _sessions = sessionsLock.withLock { sessions }
 
             _sessions.values.forEach { session in
-                session.pauseAll(persistState: false)
+                session.pauseAll()
             }
-
-            logger.trace("[\(self.name)] Paused downloads.")
         }
 
         public func resumeAll() {
+            logger.trace("[\(self.name)] Trying to resume downloads.")
+
             let _sessions = sessionsLock.withLock { sessions }
 
             _sessions.values.forEach { session in
