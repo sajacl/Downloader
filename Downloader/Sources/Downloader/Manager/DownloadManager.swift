@@ -23,12 +23,13 @@ extension Downloader {
             logger = Logger(subsystem: "Downloader.Manager", category: name)
         }
 
+        @discardableResult
         public func register(
             _ request: Request,
             intercepting completionHandler: (
                 @Sendable (URL?, Result<URLResponse, Error>?) -> Void
             )? = nil
-        ) {
+        ) -> Downloader.Task {
             logger.trace("[\(self.name)] Registering request \(request) for download.")
 
             // kind
@@ -65,6 +66,7 @@ extension Downloader {
                     manager: self
                 )
 
+                // move out with better naming
                 let delegateQueue: OperationQueue = {
                     let queue = OperationQueue()
                     queue.maxConcurrentOperationCount = 1
@@ -72,8 +74,8 @@ extension Downloader {
                 }()
 
                 let configuration = Self.createURLSessionConfiguration(
-                    for: kind,
-                    and: request
+                    for: request,
+                    basedOn: kind
                 )
 
                 let urlSession = URLSession(
@@ -92,12 +94,12 @@ extension Downloader {
                 }
             }
 
-            session.enqueue(request: request, intercepting: completionHandler)
+            return session.enqueue(request: request, intercepting: completionHandler)
         }
 
         private static func createURLSessionConfiguration(
-            for kind: Session.Kind,
-            and request: Request
+            for request: Request,
+            basedOn kind: Session.Kind
         ) -> URLSessionConfiguration {
             let configuration: URLSessionConfiguration
 
@@ -265,11 +267,11 @@ extension Downloader {
         func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
             let _sessions = sessionsLock.withLock { sessions.values }
 
-            let session = _sessions.first { _session in
+            let _session = _sessions.first { _session in
                 _session == session
             }
 
-            guard let session else {
+            guard let _session else {
                 logger.error(
                     "[\(self.name)] Session finished in background without having it in cache."
                 )
@@ -278,8 +280,10 @@ extension Downloader {
             }
 
             logger.trace(
-                "[\(self.name)] [\(session)] Session did finish events in background."
+                "[\(self.name)] [\(_session)] Session did finish events in background."
             )
+
+            _session.sessionDidFinishEvents(forBackgroundURLSession: session)
         }
     }
 
