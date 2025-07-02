@@ -2,7 +2,9 @@ import Foundation
 
 extension Downloader {
     /// Object representing a path to store a resource.
-    public struct Destination {
+    public struct Destination: Equatable, Hashable,
+                               Sendable,
+                               CustomStringConvertible, CustomDebugStringConvertible {
         /// Path for the given resource without name and extension.
         public let path: URL
 
@@ -20,6 +22,24 @@ extension Downloader {
 
             self.path = path
             self.fileName = fileName
+        }
+
+        var fullPath: URL {
+            var url = path
+
+            if let fileName = fileName {
+                url.appendPathComponent(fileName)
+            }
+
+            return url
+        }
+
+        public var description: String {
+            path.absoluteString + (fileName ?? "")
+        }
+
+        public var debugDescription: String {
+            path.absoluteString + (fileName ?? "")
         }
     }
 }
