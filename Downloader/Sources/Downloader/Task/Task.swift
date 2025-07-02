@@ -9,16 +9,14 @@ extension Downloader {
         /// Task's identifier.
         let identifier: String
 
-        /// Resource's url.
-        private let source: URL
+        /// Resource's request.
+        private let request: Request
 
-        /// Optional destination for the resource.
-//        private let destinationLock = NSLock()
-        private let destination: Destination?
+        private unowned let session: URLSession
 
         /// Systems token for download task.
-//        private let taskLock = NSLock()
-        private let downloadTask: URLSessionDownloadTask
+        private let taskLock = NSLock()
+        private var downloadTask: URLSessionDownloadTask?
 
         private let stateLock = NSLock()
         private var _state: State
@@ -37,13 +35,12 @@ extension Downloader {
         private let logger: Logger
 
         init(
-            _ downloadTask: URLSessionDownloadTask,
+            session: URLSession,
             request: Request
         ) {
-            self.downloadTask = downloadTask
-            self.identifier = request.identifier
-            self.source = request.source
-            self.destination = request.destination
+            self.session = session
+            self.identifier = Self.getTaskIdentifier(name: request.identifier)
+            self.request = request
 
             _state = .queued(nil)
 
@@ -53,14 +50,13 @@ extension Downloader {
         }
 
         init(
-            _ downloadTask: URLSessionDownloadTask,
+            session: URLSession,
             request: Request,
             resumingFrom data: Data
         ) {
-            self.downloadTask = downloadTask
+            self.session = session
             self.identifier = request.identifier
-            self.source = request.source
-            self.destination = request.destination
+            self.request = request
 
             _state = .queued(data)
 
@@ -80,103 +76,111 @@ extension Downloader {
             lhs.downloadTask == rhs
         }
 
-        func resume() {
+        func resume(
+            intercepting completionHandler: (
+                @Sendable (URL?, Result<URLResponse, Error>?) -> Void
+            )? = nil
+        ) {
             switch state {
-                case .downloading:
+                case let .queued(resumableData):
+                    if let resumableData {
+                        tryResumeTask(from: resumableData, intercepting: completionHandler)
+                    } else {
+                        tryStartNewTask(intercepting: completionHandler)
+                    }
+
+                case let .suspended(resumableData):
+                    tryResumeTask(from: resumableData, intercepting: completionHandler)
+
+                case .downloading, .completed:
+                    // no-op
                     return
-
-                case .completed:
-                    return
-
-                default:
-                    break
-            }
-
-            downloadTask.resume()
-
-            let asd = {
-                switch downloadTask.state {
-                    case .completed:
-                        return "Completed"
-
-                    case .canceling:
-                        return "Canceling"
-
-                    case .running:
-                        return "Running"
-
-                    case .suspended:
-                        return "Suspended"
-
-                    @unknown default:
-                        return "Unknown"
-                }
-            }()
-
-            logger.trace("[identifier: '\(self.identifier)'] Internal State: \(asd).")
-
-            let key: String
-
-            switch state {
-                case .queued:
-                    key = "Started"
-
-                case .suspended:
-                    key = "Resumed"
 
                 case .canceled, .failed:
-                    key = "Retried"
-
-                default:
-                    key = "_"
+                    // retry logic
+                    break
             }
-
-            logger.trace("[identifier: '\(self.identifier)'] \(key) task.")
         }
 
-//        func resume() /*-> AsyncStream<Progress>*/ {
-//            let _state = stateLock.withLock { state }
-//
-//            if case let .suspended(resumeData) = _state {
-//                if let progress = Self.extractProgress(from: resumeData) {
-//                    stateLock.withLock {
-//                        state = .downloading(progress)
-//                    }
-//                } else {
-//                    fatalError()
-////                    stateLock.withLock {
-////                        state = .downloading(.zero)
-////                    }
-//                }
-//
-//                downloadTask.resume()
-//            } else {
-//                downloadTask.resume()
-//            }
-//        }
+        private func tryStartNewTask(
+            intercepting completionHandler: (
+                @Sendable (URL?, Result<URLResponse, Error>?) -> Void
+            )? = nil
+        ) {
+            logger.trace("[identifier: '\(self.identifier)'] Starting task.")
 
-        private static func extractProgress(from data: Data) -> Progress? {
-            do {
-                guard let userInfo = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(data) as? [String: Any],
-                      let archive = userInfo["NSURLSessionResumeInfo"] as? [String: Any],
-                      let totalBytesExpected = archive["NSURLSessionResumeBytesExpected"] as? NSNumber,
-                      let currentOffset = archive["NSURLSessionResumeBytesReceived"] as? NSNumber else {
-                    return nil
-                }
+            let dataTask: URLSessionDownloadTask
 
-                return Progress(
-                    totalBytesWritten: currentOffset.uint64Value,
-                    totalBytesExpectedToWrite: totalBytesExpected.uint64Value
+            if let completionHandler {
+                dataTask = session.downloadTask(
+                    with: request.makeURLRequest(),
+                    completionHandler: { url, response, error in
+                        let result: Result<URLResponse, Error>?
+
+                        if let error {
+                            result = .failure(error)
+                        } else if let response {
+                            result = .success(response)
+                        } else {
+                            result = nil
+                        }
+
+                        completionHandler(url, result)
+                    }
                 )
-            } catch {
-                return nil
+            } else {
+                dataTask = session.downloadTask(with: request.makeURLRequest())
+            }
+
+            dataTask.resume()
+
+            taskLock.withLock {
+                downloadTask = dataTask
             }
         }
 
-        func pause(persist: Bool = false) {
+        private func tryResumeTask(
+            from resumableData: Data,
+            intercepting completionHandler: (@Sendable (URL?, Result<URLResponse, Error>?) -> Void)?
+        ) {
+            logger.trace("[identifier: '\(self.identifier)'] Resuming task.")
+
+            let newTask: URLSessionDownloadTask
+
+            if let completionHandler {
+                newTask = session.downloadTask(
+                    withResumeData: resumableData,
+                    completionHandler: { url, response, error in
+                        let result: Result<URLResponse, Error>?
+
+                        if let error {
+                            result = .failure(error)
+                        } else if let response {
+                            result = .success(response)
+                        } else {
+                            result = nil
+                        }
+
+                        completionHandler(url, result)
+                    }
+                )
+            } else {
+                newTask = session.downloadTask(
+                    withResumeData: resumableData
+                )
+            }
+
+            newTask.resume()
+
+            // precondition(!(downloadTask == newTask))
+
+            downloadTask = newTask
+        }
+
+        func pause() {
             logger.trace("[identifier: '\(self.identifier)'] Trying to pause task.")
 
-            downloadTask.cancel(byProducingResumeData: { [weak self] resumableData in
+            downloadTask!.cancel(byProducingResumeData: { [weak self] resumableData in
                 guard let self else {
                     // no-op
                     return
@@ -186,8 +190,10 @@ extension Downloader {
             })
         }
 
-        func pause(persist: Bool = false) async {
-            let resumableData = await downloadTask.cancelByProducingResumeData()
+        func pause() async {
+            logger.trace("[identifier: '\(self.identifier)'] Trying to pause task.")
+
+            let resumableData = await downloadTask!.cancelByProducingResumeData()
 
             _pause(with: resumableData)
         }
@@ -199,7 +205,7 @@ extension Downloader {
                 logger.trace("[identifier: '\(self.identifier)'] Task paused.")
             } else {
                 state = .failed(URLError(.cancelled))
-                downloadTask.cancel()
+                downloadTask!.cancel()
 
                 logger.trace("[identifier: '\(self.identifier)'] Failed to pause task, canceled.")
             }
@@ -208,27 +214,17 @@ extension Downloader {
         func cancel() {
             state = .canceled
 
-            downloadTask.cancel()
+            downloadTask!.cancel()
 
             logger.trace("[identifier: '\(self.identifier)'] Task canceled")
         }
-
-//        func updateDestination(_ newDestination: Destination) {
-//            logger.debug(
-//                "[identifier: '\(self.identifier)'] Destination updated for task to new destination '\(newDestination)'."
-//            )
-//
-//            destinationLock.withLock {
-//                destination = newDestination
-//            }
-//        }
 
         func taskUpdated(didFinishDownloadingTo location: URL) {
             logger.trace("[identifier: '\(self.identifier)'] Task finished downloading.")
 
             state = .completed(location)
 
-            let location = destination?.fullPath ?? location
+            let location = request.destination?.fullPath ?? location
 
 //            let tmpPath = location.path
 //            let stableURL = FileManager.default.temporaryDirectory.appendingPathComponent("copiedDownload.dat")
@@ -274,8 +270,11 @@ extension Downloader {
             )
         }
 
-        func taskUpdated(didCompleteWithError error: Error?) {
-            let error = error ?? URLError(.badServerResponse)
+        func taskUpdated(didCompleteWithError error: Error) {
+            if (error as? CancellationError) != nil {
+                // no-op
+                return
+            }
 
             state = .failed(error)
 
@@ -295,3 +294,19 @@ extension Downloader {
 }
 
  // Request -> Queue -> UninitializedTask -> Manager -> InProgressTask
+
+extension Downloader.Task {
+    private static let nslock = NSLock()
+    nonisolated(unsafe) private static var taskCount: UInt32 = 0
+
+    fileprivate static func getTaskIdentifier(name: String) -> String {
+        nslock.lock()
+        defer { nslock.unlock() }
+
+        let (partialValue, isOverflow) = taskCount.addingReportingOverflow(1)
+        let nextValue = isOverflow ? 1 : partialValue
+        taskCount = nextValue
+
+        return "\(name).\(nextValue)"
+    }
+}
