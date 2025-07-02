@@ -7,7 +7,9 @@ extension Downloader {
     /// Register's requests on default download manager.
     public static func register(
         _ request: Request,
-        intercepting completionHandler: ((URL?, URLResponse?, (any Error)?) -> Void)? = nil
+        intercepting completionHandler: (
+            @Sendable (URL?, Result<URLResponse, Error>?) -> Void
+        )? = nil
     ) {
         `default`.register(request, intercepting: completionHandler)
     }
